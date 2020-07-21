@@ -4,94 +4,89 @@
 import telebot
 import config
 import dbworker
-import re
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
-from tabulate import tabulate
-from random import randint
+import wbdata
+from datetime import datetime
+# import pandas as pd
+import numpy as np
+# from tabulate import tabulate
+
 
 bot = telebot.TeleBot(config.token)
 
-day = None
+flag = None
+year = None
 country = None
-countries = None
-fields = None
-
-pict = [
-    'https://avatars.mds.yandex.net/get-pdb/2864819/2091b635-1a05-4a81-9f4f-9cdd46cb9be0/s1200',
-    'https://avatars.mds.yandex.net/get-zen_doc/196516/pub_5d65e93efe289100adb4c54e_5d66099378125e00ac052d00/scale_1200',
-    'https://avatars.mds.yandex.net/get-pdb/1683100/d71b5f09-b408-42ce-b480-cbcd0d340efe/s1200?webp=false',
-    'https://avatars.mds.yandex.net/get-zen_doc/1899089/pub_5d9b5f2f35c8d800ae71fb5a_5d9b60a98f011100b48eb4fb/scale_1200',
-    'https://avatars.mds.yandex.net/get-zen_doc/196516/pub_5d65e93efe289100adb4c54e_5d66099378125e00ac052d00/scale_1200',
-    'http://ysia.ru/wp-content/uploads/2018/01/1-19.jpg'
-    ]
 
 
-def stat(tag = 0):
-    url = 'https://www.worldometers.info/coronavirus/'
-    website = requests.get(url).text
-    soup = BeautifulSoup(website, 'lxml')
-    table = soup.find_all('table')[tag]
-    rows = table.find_all('tr')
-    fields_list = []
+def info_getter(fl, yr, cnt=None):
+    yr = int(yr)
+    d_date = datetime(yr, 1, 1)
+    df_gdp = wbdata.get_dataframe({'NY.GDP.MKTP.PP.CD': 'GDP, PPP, $B'}, data_date=d_date)
 
-    for i in range(9):
-        col = []
-        col.append(rows[0].find_all('th')[i+1].get_text().strip())
-        for row in rows[1:224]:
-            r = row.find_all('td')
-            col.append(r[i+1].get_text().strip())
-        fields_list.append(col)
-    d = dict()
-    for i in range(9):
-        d[fields_list[i][0]] = fields_list[i][1:]
-    df = pd.DataFrame(d)
-    df = df.rename(columns = {'Country,Other':'Country', 'Serious,Critical':'SeriousCritical'})
-    return df
+    index_to_drop = df_gdp.index[:47]
+    df_gdp_c = df_gdp.drop(index_to_drop)
+
+    df_gdp_c = df_gdp_c.fillna({'GDP, PPP, $B': 0})
+    df_gdp_cs = df_gdp_c.sort_values(['GDP, PPP, $B'], ascending=False)
+
+    df_gdp_cs['GDP, PPP, $B'] = round(df_gdp_cs['GDP, PPP, $B'] / 1000000000).apply(lambda x: int(x))
+    df_gdp_cs['GDP, PPP, $B'] = df_gdp_cs['GDP, PPP, $B'].apply(lambda x: '{0:,}'.format(x).replace(',', ' '))
+
+    if fl == 'country':
+        ind = np.where(df_gdp_cs.index == cnt)
+        pos = ind[0][0] + 1
+        gdp = df_gdp_cs.loc[cnt]['GDP, PPP, $B']
+        print(cnt, '\nPosition in the World in ', yr, ': ', pos, '\nGPD, PPP: ', gdp, ' $B', sep='')
+
+    if fl == 'top':
+        print('Top ten countries in the World by GDP, PPP in ', yr, ':', sep='')
+        print(df_gdp_cs.head(10).to_string(header=True))
+
 
 # Начало диалога
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
     dbworker.set_state(message.chat.id, config.States.S_START.value)
-    state = dbworker.get_current_state(message.chat.id)
+    # state = dbworker.get_current_state(message.chat.id)
     # Под "остальным" понимаем состояние "0" - начало диалога
-    bot.send_message(message.chat.id, "Greetings again! I'm coronabot :) \n"
-                                      "You gotta specify which day's statistics you want to get: /today or /yesterday.\n"
-                                      "Type /info to know what I am and what I can do for you.\n"
-                                      "Tye /commands to list the available commands.\n"
-                                      "Type /reset to discard previous selections and start anew.")
-    bot.send_photo(message.chat.id, pict[randint(0, 5)])
-    dbworker.set_state(message.chat.id, config.States.S_ENTER_DAY.value)
+    bot.send_message(message.chat.id, "Greetings! I'm a \"know-something-about-gdp\" bot! :) \n"
+                                      "I know info about countries' GPD (PPP) in 1990-2019.."
+                                      "\n"
+                                      "You should specify if you want to know info about: \n"
+                                      "- what were the top ten countries by their GDP (PPP) in a particular year \n"
+                                      "or \n"
+                                      "- what position a particular country held in a given year \n"
+                                      "\n"
+                                      "Type /info to know what I can do for you.\n"
+                                      "Type /commands to list the available commands.\n"
+                                      "Type /reset to discard previous selections and start again.")
 
 
 # По команде /reset будем сбрасывать состояния, возвращаясь к началу диалога
 @bot.message_handler(commands=["reset"])
 def cmd_reset(message):
-    bot.send_message(message.chat.id, "Let's start anew.\n"
-                                      "Which day's statistics do you want to get: /today or /yesterday.\n"
-                                      "Use /info or /commands to rewind what I am and what can I do.")
-    dbworker.set_state(message.chat.id, config.States.S_ENTER_DAY.value)
+    bot.send_message(message.chat.id, "Let's start from scratch.\n"
+                                      "You should specify if you want to know info about: \n"
+                                      "- what were the top ten countries by their GDP (PPP) in a particular year \n"
+                                      "or \n"
+                                      "- what position a particular country held in a given year \n"
+                                      "\n"
+                                      "Type /info to know what I can do for you.\n"
+                                      "Type /commands to list the available commands.\n")
+    dbworker.set_state(message.chat.id, config.States.S_START.value)
 
 
-# По команде /reset будем сбрасывать состояния, возвращаясь к началу диалога
+# По команде /info будем показывать подробную информацию о возможностях бота
 @bot.message_handler(commands=["info"])
 def cmd_info(message):
     bot.send_message(message.chat.id, "Info method is used to show you what I am capable of.\n"
-                                      "I could provide you with some statistics on the notorious COVID-19 pandemia.\n"
-                                      "First you gotta select the day of statistics: \n"
-                                      "I only have info for yesterday and today\n"
-                                      "Then it's time to specify if you are interested in regions or countries.\n"
-                                      "You gotta type either regions or countries.\n"
-                                      "Type /reset to start anew.")
-    bot.send_message(message.chat.id, "The next step is to specify which countries/regions you are interested in.\n"
-                                      "You should enter comma-delimited list of countries or regions or just a single country/region:\n"
-                                      "For example  UK, Iran, Uganda, Equatorial Guinea.\n"
-                                      "You can also get lists of available regions/countries using /listregions or /listcountries correspondingly.\n"
-                                      "Finally It's time to specify what kind of statistics do you want to get: \n"
-                                      "You should enter comma-delimited list of fields or just a single field\n"
-                                      "For example  TotalCases, SeriousCritical.\n"
-                                      "You can get list of available fields using /listfields\n"
+                                      "I could provide you with some statistics on the countries' GDP (PPP).\n"
+                                      "First you should select if you want data about top ten countries "
+                                      "in a particular year, or about position a specified country held "
+                                      "in a given year. \n"
+                                      "Then it's time to specify what year you are interested in.\n"
+                                      "And if you choose to look for the data for a specific country, "
+                                      "you should provide its name. \n"
                                       "Type /reset to start anew.")
     bot.send_message(message.chat.id, "There's a number of commands you can use here. \n"
                                       "Type /commands to get the list of available functions.\n"
@@ -103,9 +98,9 @@ def cmd_commands(message):
                                       "/start - is used to start a new dialogue from the very beginning.\n"
                                       "/info - is used to know what i can do for you (there's a tree of commands)\n"
                                       "/commands - If you got here, you know what it is used for.\n"
-                                      "/listregions - is used to list regions covered by statistics.\n"
-                                      "/listcountries - is used to list countries covered by statistics.\n"
-                                      "/listfields - is used to list fields available in statistics")
+                                      # "/listregions - is used to list regions covered by statistics.\n"
+                                      # "/listcountries - is used to list countries covered by statistics.\n"
+                                      # "/listfields - is used to list fields available in statistics")
 
 
 @bot.message_handler(commands=["listregions"])
